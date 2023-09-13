@@ -10,35 +10,38 @@ use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
 
-/// The length of a MPEG frame header word.
+/// The length in bytes of a MPEG frame header word.
 pub const MPEG_HEADER_LEN: usize = 4;
 
+/// The maximum length in bytes of a MPEG audio frame including the header.
+pub const MAX_MPEG_FRAME_SIZE: u64 = 2881;
+
 /// Bit-rate lookup table for MPEG version 1 layer 1.
-static BIT_RATES_MPEG1_L1: [u32; 15] = [
+const BIT_RATES_MPEG1_L1: [u32; 15] = [
     0, 32_000, 64_000, 96_000, 128_000, 160_000, 192_000, 224_000, 256_000, 288_000, 320_000,
     352_000, 384_000, 416_000, 448_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 2.
-static BIT_RATES_MPEG1_L2: [u32; 15] = [
+const BIT_RATES_MPEG1_L2: [u32; 15] = [
     0, 32_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000, 224_000,
     256_000, 320_000, 384_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 3.
-static BIT_RATES_MPEG1_L3: [u32; 15] = [
+const BIT_RATES_MPEG1_L3: [u32; 15] = [
     0, 32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000,
     224_000, 256_000, 320_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 2 & 2.5 audio layer 1.
-static BIT_RATES_MPEG2_L1: [u32; 15] = [
+const BIT_RATES_MPEG2_L1: [u32; 15] = [
     0, 32_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000, 176_000,
     192_000, 224_000, 256_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 2 & 2.5 audio layers 2 & 3.
-static BIT_RATES_MPEG2_L23: [u32; 15] = [
+const BIT_RATES_MPEG2_L23: [u32; 15] = [
     0, 8_000, 16_000, 24_000, 32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000,
     128_000, 144_000, 160_000,
 ];
@@ -62,10 +65,6 @@ pub fn check_header(header: u32) -> bool {
     if (header >> 10) & 0x3 == 0x3 {
         return false;
     }
-    // Emphasis (0x2 is not allowed)
-    if header & 0x3 == 0x2 {
-        return false;
-    }
     true
 }
 
@@ -81,9 +80,9 @@ pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
     loop {
-        // Synchronize stream to the next frame using the sync word. The MP3 frame header always
-        // starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG
-        // version 2.5.
+        // Synchronize stream to the next frame using the sync word. The MPEG audio frame header
+        // always starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to
+        // MPEG version 2.5.
         while !is_frame_header_word_synced(sync) {
             sync = (sync << 8) | u32::from(reader.read_u8()?);
         }
@@ -101,7 +100,7 @@ pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
 }
 
 pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
-    // The MP3 header is structured as follows:
+    // The MPEG audio header is structured as follows:
     //
     // 0b1111_1111 0b111v_vlly 0brrrr_hhpx 0bmmmm_coee
     // where:
@@ -113,22 +112,22 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         0b00 => MpegVersion::Mpeg2p5,
         0b10 => MpegVersion::Mpeg2,
         0b11 => MpegVersion::Mpeg1,
-        _ => return decode_error("mp3: invalid MPEG version"),
+        _ => return decode_error("mpa: invalid MPEG version"),
     };
 
     let layer = match (header & 0x6_0000) >> 17 {
         0b01 => MpegLayer::Layer3,
         0b10 => MpegLayer::Layer2,
         0b11 => MpegLayer::Layer1,
-        _ => return decode_error("mp3: invalid MPEG layer"),
+        _ => return decode_error("mpa: invalid MPEG layer"),
     };
 
     let bitrate = match ((header & 0xf000) >> 12, version, layer) {
         // "Free" bit-rate. Note, this is NOT variable bit-rate and is not a mandatory feature of
         // MP3 decoders.
-        (0b0000, _, _) => return unsupported_error("mp3: free bit-rate is not supported"),
+        (0b0000, _, _) => return unsupported_error("mpa: free bit-rate is not supported"),
         // Invalid bit-rate.
-        (0b1111, _, _) => return decode_error("mp3: invalid bit-rate"),
+        (0b1111, _, _) => return decode_error("mpa: invalid bit-rate"),
         // MPEG 1 bit-rates.
         (i, MpegVersion::Mpeg1, MpegLayer::Layer1) => BIT_RATES_MPEG1_L1[i as usize],
         (i, MpegVersion::Mpeg1, MpegLayer::Layer2) => BIT_RATES_MPEG1_L2[i as usize],
@@ -148,7 +147,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         (0b00, MpegVersion::Mpeg2p5) => (11_025, 6),
         (0b01, MpegVersion::Mpeg2p5) => (12_000, 7),
         (0b10, MpegVersion::Mpeg2p5) => (8_000, 8),
-        _ => return decode_error("mp3: invalid sample rate"),
+        _ => return decode_error("mpa: invalid sample rate"),
     };
 
     let channel_mode = match ((header & 0xc0) >> 6, layer) {
@@ -178,19 +177,18 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         if channel_mode == ChannelMode::Mono {
             if bitrate == 224_000 || bitrate == 256_000 || bitrate == 320_000 || bitrate == 384_000
             {
-                return decode_error("mp3: invalid Layer 2 bitrate for mono channel mode");
+                return decode_error("mpa: invalid Layer 2 bitrate for mono channel mode");
             }
         }
         else if bitrate == 32_000 || bitrate == 48_000 || bitrate == 56_000 || bitrate == 80_000 {
-            return decode_error("mp3: invalid Layer 2 bitrate for non-mono channel mode");
+            return decode_error("mpa: invalid Layer 2 bitrate for non-mono channel mode");
         }
     }
 
     let emphasis = match header & 0x3 {
-        0b00 => Emphasis::None,
         0b01 => Emphasis::Fifty15,
         0b11 => Emphasis::CcitJ17,
-        _ => return decode_error("mp3: invalid emphasis"),
+        _ => Emphasis::None,
     };
 
     let is_copyrighted = header & 0x8 != 0x0;
@@ -199,11 +197,26 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
 
     let has_crc = header & 0x1_0000 == 0;
 
-    // Calculate the size of the frame excluding this header.
-    let frame_size = (if version == MpegVersion::Mpeg1 { 144 } else { 72 } * bitrate / sample_rate)
-        as usize
-        + if has_padding { 1 } else { 0 }
-        - 4;
+    // Constants provided for size calculation in section ISO-11172 section 2.4.3.1.
+    let factor = match layer {
+        MpegLayer::Layer1 => 12,
+        MpegLayer::Layer2 => 144,
+        MpegLayer::Layer3 if version == MpegVersion::Mpeg1 => 144,
+        MpegLayer::Layer3 => 72,
+    };
+
+    // The header specifies the total frame size in "slots". For layers 2 & 3 a slot is 1 byte,
+    // however for layer 1 a slot is 4 bytes.
+    let slot_size = match layer {
+        MpegLayer::Layer1 => 4,
+        _ => 1,
+    };
+
+    // Calculate the total frame size in number of slots.
+    let frame_size_slots = (factor * bitrate / sample_rate) as usize + usize::from(has_padding);
+
+    // Calculate the frame size in bytes, excluding the header.
+    let frame_size = (frame_size_slots * slot_size) - 4;
 
     Ok(FrameHeader {
         version,
@@ -224,6 +237,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
 /// Synchronize the stream to the start of the next MPEG audio frame header, then read and return
 /// the frame header or an error.
 #[inline]
+#[allow(dead_code)]
 pub fn read_frame_header<B: ReadBytes>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and parse the frame header.
     parse_frame_header(sync_frame(reader)?)

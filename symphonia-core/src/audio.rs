@@ -17,7 +17,7 @@ use std::vec::Vec;
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
-use crate::conv::{ConvertibleSample, IntoSample};
+use crate::conv::{ConvertibleSample, FromSample, IntoSample};
 use crate::errors::Result;
 use crate::sample::{i24, u24, Sample};
 use crate::units::Duration;
@@ -142,7 +142,7 @@ pub enum Layout {
 
 impl Layout {
     /// Converts a channel `Layout` into a `Channels` bit mask.
-    fn into_channels(self) -> Channels {
+    pub fn into_channels(self) -> Channels {
         match self {
             Layout::Mono => Channels::FRONT_LEFT,
             Layout::Stereo => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
@@ -160,7 +160,7 @@ impl Layout {
 }
 
 /// `SignalSpec` describes the characteristics of a Signal.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SignalSpec {
     /// The signal sampling rate in hertz (Hz).
     pub rate: u32,
@@ -376,8 +376,7 @@ impl<S: Sample> AudioBuffer<S> {
     where
         S: IntoSample<T>,
     {
-        assert!(dest.n_frames == self.n_frames);
-        assert!(dest.n_capacity == self.n_capacity);
+        assert!(dest.n_capacity >= self.n_capacity);
         assert!(dest.spec == self.spec);
 
         for c in 0..self.spec.channels.count() {
@@ -388,6 +387,8 @@ impl<S: Sample> AudioBuffer<S> {
                 *d = (*s).into_sample();
             }
         }
+
+        dest.n_frames = self.n_frames;
     }
 
     /// Makes an equivalent AudioBuffer of a different type.
@@ -443,6 +444,27 @@ impl<'a> AudioBufferRef<'a> {
     /// Gets the number of frames in the buffer.
     pub fn frames(&self) -> usize {
         impl_audio_buffer_ref_func!(self, buf, buf.frames())
+    }
+
+    pub fn convert<T>(&self, dest: &mut AudioBuffer<T>)
+    where
+        T: Sample
+            + FromSample<u8>
+            + FromSample<u16>
+            + FromSample<u24>
+            + FromSample<u32>
+            + FromSample<i8>
+            + FromSample<i16>
+            + FromSample<i24>
+            + FromSample<i32>
+            + FromSample<f32>
+            + FromSample<f64>,
+    {
+        impl_audio_buffer_ref_func!(self, buf, buf.convert(dest))
+    }
+
+    pub fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
+        impl_audio_buffer_ref_func!(self, buf, buf.make_equivalent::<E>())
     }
 }
 
@@ -693,7 +715,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 /// within the buffer. `SampleBuffer` is mean't for safely importing and exporting sample data to
 /// and from Symphonia using the sample's in-memory data-type.
 pub struct SampleBuffer<S: Sample> {
-    buf: Vec<S>,
+    buf: Box<[S]>,
     n_written: usize,
 }
 
@@ -712,7 +734,10 @@ impl<S: Sample> SampleBuffer<S> {
         // safe.
         assert!(n_samples <= (usize::MAX / mem::size_of::<S>()) as u64, "duration too large");
 
-        SampleBuffer { buf: vec![S::MID; n_samples as usize], n_written: 0 }
+        // Allocate enough memory for all the samples and fill the buffer with silence.
+        let buf = vec![S::MID; n_samples as usize].into_boxed_slice();
+
+        SampleBuffer { buf, n_written: 0 }
     }
 
     /// Gets the number of written samples.
@@ -730,9 +755,19 @@ impl<S: Sample> SampleBuffer<S> {
         &self.buf[..self.n_written]
     }
 
+    /// Gets a mutable slice of all written samples.
+    pub fn samples_mut(&mut self) -> &mut [S] {
+        &mut self.buf[..self.n_written]
+    }
+
     /// Gets the maximum number of samples the `SampleBuffer` may store.
     pub fn capacity(&self) -> usize {
         self.buf.len()
+    }
+
+    /// Clears all written samples.
+    pub fn clear(&mut self) {
+        self.n_written = 0;
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
@@ -856,8 +891,8 @@ impl sealed::Sealed for [u8; 6] {}
 impl sealed::Sealed for [u8; 7] {}
 impl sealed::Sealed for [u8; 8] {}
 
-/// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type to
-/// actual binary type.
+/// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type
+/// to actual binary type.
 pub trait RawSample: Sample {
     /// The `RawType` is a primitive data type, or fixed-size byte array, that is the final binary
     /// representation of the sample when written out to a byte-buffer.
@@ -960,7 +995,7 @@ impl RawSample for f64 {
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
 /// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
 pub struct RawSampleBuffer<S: Sample + RawSample> {
-    buf: Vec<S::RawType>,
+    buf: Box<[S::RawType]>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
@@ -985,7 +1020,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         );
 
         // Allocate enough memory for all the samples and fill the buffer with silence.
-        let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
+        let buf = vec![S::MID.into_raw_sample(); n_samples as usize].into_boxed_slice();
 
         RawSampleBuffer { buf, n_written: 0, sample_format: PhantomData }
     }
@@ -1003,6 +1038,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Gets the maximum number of samples the `RawSampleBuffer` may store.
     pub fn capacity(&self) -> usize {
         self.buf.len()
+    }
+
+    /// Clears all written samples.
+    pub fn clear(&mut self) {
+        self.n_written = 0;
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.

@@ -11,7 +11,7 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
-static GENRES: &[&str] = &[
+const GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
     "Blues",
     "Classic rock",
@@ -214,7 +214,7 @@ pub fn read_id3v1<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     let marker = reader.read_triple_bytes()?;
 
     if marker != *b"TAG" {
-        return unsupported_error("id3v1: Not an ID3v1 tag.");
+        return unsupported_error("id3v1: Not an ID3v1 tag");
     }
 
     let buf = reader.read_boxed_slice_exact(125)?;

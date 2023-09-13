@@ -8,8 +8,9 @@
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBitsLtr;
 
-use super::{FrameData, Granule, GranuleChannel};
-use crate::common::*;
+use crate::common::{ChannelMode, FrameHeader};
+
+use super::{common::*, FrameData, Granule, GranuleChannel};
 
 /// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two
 /// possible bit lengths for scale factors: slen1 and slen2. The first N of bands have scale factors
@@ -17,7 +18,7 @@ use crate::common::*;
 /// N, is determined by block type.
 ///
 /// This table is indexed by scalefac_compress.
-static SCALE_FACTOR_SLEN: [(u32, u32); 16] = [
+const SCALE_FACTOR_SLEN: [(u32, u32); 16] = [
     (0, 0),
     (0, 1),
     (0, 2),
@@ -64,7 +65,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     // The maximum number of samples in a granule is 576. One big_value decodes to 2 samples,
     // therefore there can be no more than 288 (576/2) big_values.
     if channel.big_values > 288 {
-        return decode_error("mp3: granule big_values > 288");
+        return decode_error("mpa: granule big_values > 288");
     }
 
     channel.global_gain = bs.read_bits_leq32(8)? as u8;
@@ -81,7 +82,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
 
         channel.block_type = match block_type_enc {
             // Only transitional Long blocks (Start, End) are allowed with window switching.
-            0b00 => return decode_error("mp3: invalid block_type"),
+            0b00 => return decode_error("mpa: invalid block_type"),
             0b01 => BlockType::Start,
             0b10 => BlockType::Short { is_mixed },
             0b11 => BlockType::End,
@@ -173,7 +174,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     channel.preflag = if header.is_mpeg1() { bs.read_bool()? } else { false };
 
     channel.scalefac_scale = bs.read_bool()?;
-    channel.count1table_select = if bs.read_bool()? { 1 } else { 0 };
+    channel.count1table_select = bs.read_bit()? as u8;
 
     Ok(())
 }

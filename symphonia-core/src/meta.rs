@@ -69,7 +69,7 @@ pub struct MetadataOptions {
 ///
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
 /// frame specification.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StandardVisualKey {
     FileIcon,
     OtherIcon,
@@ -95,7 +95,7 @@ pub enum StandardVisualKey {
 /// `StandardTagKey` is an enumeration providing standardized keys for common tag types.
 /// A tag reader may assign a `StandardTagKey` to a `Tag` if the tag's key is generally
 /// accepted to map to a specific usage.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StandardTagKey {
     AcoustidFingerprint,
     AcoustidId,
@@ -464,6 +464,16 @@ impl<'a> Metadata<'a> {
     /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
     pub fn current(&self) -> Option<&MetadataRevision> {
         self.revisions.front()
+    }
+
+    /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of the metadata.
+    pub fn skip_to_latest(&mut self) -> Option<&MetadataRevision> {
+        loop {
+            if self.pop().is_none() {
+                break;
+            }
+        }
+        self.current()
     }
 
     /// If there are newer `Metadata` revisions, advances the `MetadataLog` by discarding the

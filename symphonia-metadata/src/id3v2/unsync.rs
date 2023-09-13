@@ -61,6 +61,11 @@ impl<B: ReadBytes + FiniteStream> UnsyncStream<B> {
     pub fn new(inner: B) -> Self {
         UnsyncStream { inner, byte: 0 }
     }
+
+    /// Convert the `UnsyncStream` to the inner stream.
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
 }
 
 impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
@@ -121,7 +126,7 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
 
             // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first
             // byte of buf.
-            let mut src = if self.byte == 0xff && buf[0] == 0x00 { 1 } else { 0 };
+            let mut src = usize::from(self.byte == 0xff && buf[0] == 0x00);
             let mut dst = 0;
 
             // Record the last byte in buf to continue unsychronisation streaming later.

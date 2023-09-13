@@ -87,7 +87,7 @@ pub use udta::UdtaAtom;
 pub use wave::WaveAtom;
 
 /// Atom types.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AtomType {
     Ac3,
     AdvisoryTag,
@@ -359,7 +359,7 @@ impl AtomHeader {
     pub fn base_header_len(&self) -> u64 {
         match self.atom_len {
             0 => AtomHeader::HEADER_SIZE,
-            _ => (self.atom_len - self.data_len),
+            _ => self.atom_len - self.data_len,
         }
     }
 
@@ -435,14 +435,15 @@ impl<B: ReadBytes> AtomIterator<B> {
         let atom = AtomHeader::read(&mut self.reader)?;
 
         // Calculate the start position for the next atom (the exclusive end of the current atom).
-        self.next_atom_pos += match atom.atom_len {
+        self.next_atom_pos = match atom.atom_len {
             0 => {
                 // An atom with a length of zero is defined to span to the end of the stream. If
                 // len is available, use it for the next atom start position, otherwise, use u64 max
                 // which will trip an end of stream error on the next iteration.
-                self.len.unwrap_or(std::u64::MAX) - self.next_atom_pos
+                self.len.map(|l| self.base_pos + l).unwrap_or(std::u64::MAX)
             }
-            len => len,
+
+            len => self.next_atom_pos + len,
         };
 
         self.cur_atom = Some(atom);

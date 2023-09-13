@@ -155,16 +155,18 @@ impl Default for SynthesisState {
 
 /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
 /// 18 blocks of 32 PCM audio samples.
-pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &mut [f32]) {
+pub fn synthesis(state: &mut SynthesisState, n_frames: usize, in_samples: &[f32], out: &mut [f32]) {
     let mut s_vec = [0f32; 32];
     let mut d_vec = [0f32; 32];
 
+    assert!(in_samples.len() == 32 * n_frames);
+
     // There are 18 synthesized PCM sample blocks.
-    for b in 0..18 {
+    for b in 0..n_frames {
         // First, select the b-th sample from each of the 32 sub-bands, and place them in the s
         // vector, s_vec.
         for i in 0..32 {
-            s_vec[i] = in_samples[18 * i + b];
+            s_vec[i] = in_samples[n_frames * i + b];
         }
 
         // Get the front slot of the v_vec FIFO.
@@ -853,13 +855,14 @@ mod tests {
         const PI_32: f64 = f64::consts::PI / 32.0;
 
         let mut result = [0f32; 32];
-        for i in 0..32 {
-            let mut sum = 0.0;
-            for j in 0..32 {
-                sum += (x[j] as f64) * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos();
-            }
-            result[i] = sum as f32;
+        for (i, item) in result.iter_mut().enumerate() {
+            *item = x
+                .iter()
+                .enumerate()
+                .map(|(j, &jtem)| jtem * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos() as f32)
+                .sum();
         }
+
         result
     }
 

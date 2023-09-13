@@ -14,13 +14,39 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-mod codebooks;
+// Shared modules.
 mod common;
-mod decoder;
-mod demuxer;
 mod header;
-mod layer3;
+
+// Demuxer module.
+mod demuxer;
+
+// Decoder modules.
+#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+mod decoder;
+#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
 mod synthesis;
 
-pub use decoder::Mp3Decoder;
-pub use demuxer::Mp3Reader;
+// Shared layer 1 & 2 decoder support module.
+#[cfg(any(feature = "mp1", feature = "mp2"))]
+mod layer12;
+
+// Layer-specific decoder support modules.
+#[cfg(feature = "mp1")]
+mod layer1;
+#[cfg(feature = "mp2")]
+mod layer2;
+#[cfg(feature = "mp3")]
+mod layer3;
+
+#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+pub use decoder::MpaDecoder;
+pub use demuxer::MpaReader;
+
+// For SemVer compatibility in v0.5.x series.
+#[deprecated = "use `symphonia_bundle_mp3::MpaDecoder` instead"]
+#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+pub type Mp3Decoder = MpaDecoder;
+
+#[deprecated = "use `symphonia_bundle_mp3::MpaReader` instead"]
+pub type Mp3Reader = MpaReader;

@@ -16,7 +16,9 @@
 //!
 //! Supported formats, codecs, and metadata tags are listed below. By default Symphonia only enables
 //! royalty-free open standard media formats and codecs. Other formats and codecs must be enabled
-//! via. a feature flag.
+//! using feature flags.
+//!
+//! **Tip:** All formats and codecs can be enabled with the `all` feature flag.
 //!
 //! ## Formats
 //!
@@ -31,6 +33,8 @@
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
+//! **Tip:** All formats can be enabled with the `all-codecs` feature flag.
+//!
 //! ## Codecs
 //!
 //! The following codecs are supported.
@@ -38,11 +42,17 @@
 //! | Codec    | Feature Flag | Gapless | Default |
 //! |----------|--------------|---------|---------|
 //! | AAC-LC   | `aac`        | No      | No      |
+//! | ADPCM    | `adpcm`      | Yes     | Yes     |
 //! | ALAC     | `alac`       | Yes     | No      |
 //! | FLAC     | `flac`       | Yes     | Yes     |
-//! | MP3      | `mp3`        | Yes     | No      |
+//! | MP1      | `mp1`, `mpa` | No      | No      |
+//! | MP2      | `mp2`, `mpa` | No      | No      |
+//! | MP3      | `mp3`, `mpa` | Yes     | No      |
 //! | PCM      | `pcm`        | Yes     | Yes     |
 //! | Vorbis   | `vorbis`     | Yes     | Yes     |
+//!
+//! **Tip:** All codecs can be enabled with the `all-codecs` feature flag. Similarly, all MPEG
+//! audio codecs can be enabled with the `mpa` feature flag.
 //!
 //! ## Metadata
 //!
@@ -118,10 +128,12 @@ pub mod default {
 
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacDecoder;
-        #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Decoder;
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub use symphonia_bundle_mp3::MpaDecoder;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AacDecoder;
+        #[cfg(feature = "adpcm")]
+        pub use symphonia_codec_adpcm::AdpcmDecoder;
         #[cfg(feature = "alac")]
         pub use symphonia_codec_alac::AlacDecoder;
         #[cfg(feature = "opus")]
@@ -130,6 +142,10 @@ pub mod default {
         pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
         pub use symphonia_codec_vorbis::VorbisDecoder;
+
+        #[deprecated = "use `default::codecs::MpaDecoder` instead"]
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub type Mp3Decoder = MpaDecoder;
     }
 
     pub mod formats {
@@ -137,8 +153,8 @@ pub mod default {
 
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacReader;
-        #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Reader;
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
         #[cfg(feature = "isomp4")]
@@ -147,8 +163,14 @@ pub mod default {
         pub use symphonia_format_mkv::MkvReader;
         #[cfg(feature = "ogg")]
         pub use symphonia_format_ogg::OggReader;
+        #[cfg(feature = "aiff")]
+        pub use symphonia_format_riff::AiffReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
+
+        #[deprecated = "use `default::formats::MpaReader` instead"]
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub type Mp3Reader = MpaReader;
     }
 
     use lazy_static::lazy_static;
@@ -201,14 +223,17 @@ pub mod default {
         #[cfg(feature = "aac")]
         registry.register_all::<codecs::AacDecoder>();
 
+        #[cfg(feature = "adpcm")]
+        registry.register_all::<codecs::AdpcmDecoder>();
+
         #[cfg(feature = "alac")]
         registry.register_all::<codecs::AlacDecoder>();
 
         #[cfg(feature = "flac")]
         registry.register_all::<codecs::FlacDecoder>();
 
-        #[cfg(feature = "mp3")]
-        registry.register_all::<codecs::Mp3Decoder>();
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        registry.register_all::<codecs::MpaDecoder>();
 
         #[cfg(feature = "pcm")]
         registry.register_all::<codecs::PcmDecoder>();
@@ -238,8 +263,11 @@ pub mod default {
         #[cfg(feature = "isomp4")]
         probe.register_all::<formats::IsoMp4Reader>();
 
-        #[cfg(feature = "mp3")]
-        probe.register_all::<formats::Mp3Reader>();
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        probe.register_all::<formats::MpaReader>();
+
+        #[cfg(feature = "aiff")]
+        probe.register_all::<formats::AiffReader>();
 
         #[cfg(feature = "wav")]
         probe.register_all::<formats::WavReader>();

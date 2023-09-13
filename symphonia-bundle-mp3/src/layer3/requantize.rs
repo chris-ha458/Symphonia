@@ -5,18 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::{f32, f64};
-
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBitsLtr;
 
-use lazy_static::lazy_static;
-use log::info;
+use crate::common::FrameHeader;
 
-use super::GranuleChannel;
-use crate::codebooks;
-use crate::common::*;
+use super::{codebooks, common::*, GranuleChannel};
+
+use std::cmp::min;
+use std::{f32, f64};
+
+use lazy_static::lazy_static;
+
+use log::info;
 
 lazy_static! {
     /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
@@ -37,9 +38,7 @@ lazy_static! {
 /// Zero a sample buffer.
 #[inline(always)]
 pub(super) fn zero(buf: &mut [f32; 576]) {
-    for s in buf.iter_mut() {
-        *s = 0.0;
-    }
+    buf.fill(0.0);
 }
 
 /// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream`
@@ -57,7 +56,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 ) -> Result<usize> {
     // If there are no Huffman code bits, zero all samples and return immediately.
     if part3_bits == 0 {
-        zero(buf);
+        buf.fill(0.0);
         return Ok(0);
     }
 
@@ -75,8 +74,8 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
     // end of each region (non-inclusive). Clamp to the end of the big_values partition.
     let regions: [usize; 3] = [
-        min(channel.region1_start as usize, big_values_len),
-        min(channel.region2_start as usize, big_values_len),
+        min(channel.region1_start, big_values_len),
+        min(channel.region2_start, big_values_len),
         min(576, big_values_len),
     ];
 
@@ -128,9 +127,9 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                     bits_read += linbits;
                 }
 
-                // The next bit is the sign bit. The value of the sample is raised to the (4/3)
-                // power.
-                buf[i] = if bs.read_bool()? { -pow43_table[x] } else { pow43_table[x] };
+                // The next bit is the sign bit. If the sign bit is 1, then the sample should be
+                // negative. The value of the sample is raised to the (4/3) power.
+                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[x];
                 bits_read += 1;
             }
             else {
@@ -146,7 +145,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                     bits_read += linbits;
                 }
 
-                buf[i] = if bs.read_bool()? { -pow43_table[y] } else { pow43_table[y] };
+                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[y];
                 bits_read += 1;
             }
             else {
@@ -161,55 +160,58 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {
+        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
+        // Each sample is 1-bit long (1 or 0).
+        //
+        // For each 1-bit sample, if it is 0, then the dequantized sample value is 0 as well. If
+        // the 1-bit sample is 1, then a sign bit is read. The dequantized sample is then either
+        // +/-1.0 depending on the sign bit.
+
         // Decode the next Huffman code.
         let (value, code_len) = bs.read_codebook(count1_codebook)?;
         bits_read += code_len;
 
-        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
-        // Each sample is 1-bit long (1 or 0).
-        //
-        // For each 1-bit sample, if it is 0, then then dequantized sample value is 0 as well. If
-        // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is
-        // then either +/-1.0 depending on the sign bit.
-        if value & 0x8 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+        // The first 4 bits indicate if a sample if 0 or 1. Count the number of samples with a
+        // non-zero value.
+        let num_ones = (value & 0xf).count_ones();
+
+        // Read the sign bits for each non-zero sample in a single read.
+        let mut signs = bs.read_bits_leq32(num_ones)?;
+        bits_read += num_ones;
+
+        // Unpack the samples.
+        if value & 0x1 != 0 {
+            buf[i + 3] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 3] = 0.0;
         }
-
-        i += 1;
-
-        if value & 0x4 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
-        }
-        else {
-            buf[i] = 0.0;
-        }
-
-        i += 1;
 
         if value & 0x2 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+            buf[i + 2] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 2] = 0.0;
         }
 
-        i += 1;
-
-        if value & 0x1 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+        if value & 0x4 != 0 {
+            buf[i + 1] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 1] = 0.0;
         }
 
-        i += 1;
+        if value & 0x8 != 0 {
+            buf[i + 0] = 1.0 - 2.0 * (signs & 1) as f32;
+        }
+        else {
+            buf[i + 0] = 0.0;
+        }
+
+        i += 4;
     }
 
     // Ignore any extra "stuffing" bits.
@@ -233,10 +235,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // The final partition after the count1 partition is the rzero partition. Samples in this
     // partition are all 0.
-    for j in (i..576).step_by(2) {
-        buf[j + 0] = 0.0;
-        buf[j + 1] = 0.0;
-    }
+    buf[i..].fill(0.0);
 
     Ok(i)
 }
